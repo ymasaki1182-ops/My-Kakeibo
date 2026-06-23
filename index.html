@@ -1663,6 +1663,148 @@ if ('serviceWorker' in navigator) {
       .catch(err => console.error('PWA ServiceWorker 登録失敗:', err));
   });
 }
+
+// ═══════════════════════════════════════════════
+// 【機能拡張】カテゴリー・支払方法・資産口座の並び替え機能（オーバーライド）
+// ═══════════════════════════════════════════════
+
+// 1. 設定画面（カテゴリー・支払方法）の並び替え対応
+function renderSettings(){
+  const vb=document.getElementById("card-tab-visibility-box"); vb.innerHTML='<h2 class="section-title">タブ表示設定</h2>';
+  const tl={input:"入力",history:"履歴",analysis:"分析",budget:"予算",assets:"資産",card:"カード",loans:"ローン",settings:"設定"};
+  Object.entries(tl).forEach(([k,v])=>{
+    const row=document.createElement("div"); row.className="toggle-row";
+    row.innerHTML=`<span class="toggle-label">${v}タブ</span><button class="toggle-btn ${tabVisibility[k]?"on":"off"}">${tabVisibility[k]?"表示":"非表示"}</button>`;
+    row.querySelector("button").onclick=()=>{ tabVisibility[k]=!tabVisibility[k]; LS.set("tabVisibility",tabVisibility); renderNavigation(); renderSettings(); };
+    vb.appendChild(row);
+  });
+
+  // 支払方法のレンダリング（🔼🔽ボタン追加）
+  const ml=document.getElementById("list-settings-methods"); ml.innerHTML="";
+  paymentMethods.forEach((m, idx)=>{
+    const row=document.createElement("div"); row.className="cat-edit-row";
+    row.innerHTML=`
+      <span class="cat-edit-label">${m.label}</span>
+      <div class="cat-edit-controls" style="display:flex; gap:4px; align-items:center;">
+        <button class="sort-up-btn" style="background:var(--gray-100); border:1px solid var(--gray-300); color:var(--gray-700); border-radius:4px; padding:4px 8px; font-size:11px; cursor:pointer;">🔼</button>
+        <button class="sort-down-btn" style="background:var(--gray-100); border:1px solid var(--gray-300); color:var(--gray-700); border-radius:4px; padding:4px 8px; font-size:11px; cursor:pointer;">🔽</button>
+        <button class="del-btn-sm">🗑</button>
+      </div>`;
+    
+    // 端の要素のボタンを半透明化
+    if(idx === 0) row.querySelector(".sort-up-btn").style.opacity = "0.3";
+    if(idx === paymentMethods.length - 1) row.querySelector(".sort-down-btn").style.opacity = "0.3";
+
+    row.querySelector(".sort-up-btn").onclick=()=>{
+      if(idx > 0) {
+        [paymentMethods[idx], paymentMethods[idx-1]] = [paymentMethods[idx-1], paymentMethods[idx]];
+        LS.set("paymentMethods", paymentMethods); renderSettings();
+      }
+    };
+    row.querySelector(".sort-down-btn").onclick=()=>{
+      if(idx < paymentMethods.length - 1) {
+        [paymentMethods[idx], paymentMethods[idx+1]] = [paymentMethods[idx+1], paymentMethods[idx]];
+        LS.set("paymentMethods", paymentMethods); renderSettings();
+      }
+    };
+    row.querySelector(".del-btn-sm").onclick=()=>{
+      if(paymentMethods.length<=1){ appAlert("エラー","最低1つの支払方法が必要です"); return; }
+      appConfirm("削除の確認",`「${m.label}」を削除しますか？`,()=>{ paymentMethods=paymentMethods.filter(x=>x.id!==m.id); LS.set("paymentMethods",paymentMethods); renderSettings(); });
+    };
+    ml.appendChild(row);
+  });
+
+  // カテゴリーのレンダリング（🔼🔽ボタン追加）
+  const cl=document.getElementById("list-settings-categories"); cl.innerHTML="";
+  categories.forEach((c, idx)=>{
+    const row=document.createElement("div"); row.className="cat-edit-row";
+    row.innerHTML=`
+      <span class="cat-edit-label">${c.label}</span>
+      <div class="cat-edit-controls" style="display:flex; gap:4px; align-items:center;">
+        <button class="sort-up-btn" style="background:var(--gray-100); border:1px solid var(--gray-300); color:var(--gray-700); border-radius:4px; padding:4px 8px; font-size:11px; cursor:pointer;">🔼</button>
+        <button class="sort-down-btn" style="background:var(--gray-100); border:1px solid var(--gray-300); color:var(--gray-700); border-radius:4px; padding:4px 8px; font-size:11px; cursor:pointer;">🔽</button>
+        <input class="budget-input-sm" type="number" value="${c.budget}" placeholder="予算">
+        <button class="del-btn-sm">🗑</button>
+      </div>`;
+    
+    if(idx === 0) row.querySelector(".sort-up-btn").style.opacity = "0.3";
+    if(idx === categories.length - 1) row.querySelector(".sort-down-btn").style.opacity = "0.3";
+
+    row.querySelector(".sort-up-btn").onclick=()=>{
+      if(idx > 0) {
+        [categories[idx], categories[idx-1]] = [categories[idx-1], categories[idx]];
+        LS.set("categories", categories); renderSettings();
+      }
+    };
+    row.querySelector(".sort-down-btn").onclick=()=>{
+      if(idx < categories.length - 1) {
+        [categories[idx], categories[idx+1]] = [categories[idx+1], categories[idx]];
+        LS.set("categories", categories); renderSettings();
+      }
+    };
+    row.querySelector("input").onchange=e=>{ c.budget=Number(e.target.value)||0; LS.set("categories",categories); };
+    row.querySelector(".del-btn-sm").onclick=()=>{ appConfirm("削除の確認",`「${c.label}」を削除しますか？`,()=>{ categories=categories.filter(x=>x.id!==c.id); LS.set("categories",categories); renderSettings(); }); };
+    cl.appendChild(row);
+  });
+}
+
+// 2. 資産画面（口座一覧）の並び替え対応
+function renderAssetsScreen(){
+  const totalAsset=assetAccounts.reduce((s,a)=>s+a.balance,0);
+  const totalLoan=loans.reduce((s,l)=>s+l.remaining,0);
+  const net=totalAsset-totalLoan;
+  const nwEl=document.getElementById("txt-asset-networth");
+  nwEl.textContent=`¥${net.toLocaleString("ja-JP")}`;
+  nwEl.className="big-number"+(net<0?" negative":net>0?" positive":"");
+  document.getElementById("txt-asset-total").textContent=`¥${totalAsset.toLocaleString("ja-JP")}`;
+  document.getElementById("txt-asset-debt").textContent=`¥${totalLoan.toLocaleString("ja-JP")}`;
+  const bankTotal=assetAccounts.filter(a=>a.type==="bank"||a.type==="savings").reduce((s,a)=>s+a.balance,0);
+  const sp=Math.min((bankTotal/SAVING_GOAL)*100,100);
+  document.getElementById("txt-asset-goal-pct").textContent=`${sp.toFixed(1)}%`;
+  document.getElementById("bar-asset-goal-fill").style.width=`${sp}%`;
+  
+  // 口座一覧のレンダリング（🔼🔽ボタン追加）
+  const list=document.getElementById("list-asset-accounts"); list.innerHTML="";
+  assetAccounts.forEach((acc, idx)=>{
+    const ti=ACCOUNT_TYPES.find(t=>t.id===acc.type)||ACCOUNT_TYPES[0];
+    const div=document.createElement("div"); div.className="asset-account-item";
+    div.innerHTML=`
+      <div class="asset-account-left">
+        <span class="asset-account-icon">${acc.icon||ti.icon}</span>
+        <div class="asset-account-info">
+          <div class="asset-account-name">${acc.name}</div>
+          <div class="asset-account-type">${ti.label}</div>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <span class="asset-account-amount ${acc.type==="points"?"points-type":""}">¥${acc.balance.toLocaleString("ja-JP")}</span>
+        <button class="sort-up-btn" style="background:var(--gray-100); border:1px solid var(--gray-300); border-radius:8px; width:32px; height:32px; cursor:pointer; font-size:12px;">🔼</button>
+        <button class="sort-down-btn" style="background:var(--gray-100); border:1px solid var(--gray-300); border-radius:8px; width:32px; height:32px; cursor:pointer; font-size:12px;">🔽</button>
+        <button class="card-edit-btn" style="background:var(--indigo-light); color:var(--indigo-dark); border:none; border-radius:8px; width:32px; height:32px; cursor:pointer; font-size:13px;">✏️</button>
+        <button class="del-btn" style="background:var(--red-light); color:var(--red); border:none; border-radius:8px; width:32px; height:32px; cursor:pointer; font-size:13px;">🗑</button>
+      </div>`;
+    
+    if(idx === 0) div.querySelector(".sort-up-btn").style.opacity = "0.3";
+    if(idx === assetAccounts.length - 1) div.querySelector(".sort-down-btn").style.opacity = "0.3";
+
+    div.querySelector(".sort-up-btn").onclick=()=>{
+      if(idx > 0) {
+        [assetAccounts[idx], assetAccounts[idx-1]] = [assetAccounts[idx-1], assetAccounts[idx]];
+        LS.set("assetAccounts", assetAccounts); renderAssetsScreen();
+      }
+    };
+    div.querySelector(".sort-down-btn").onclick=()=>{
+      if(idx < assetAccounts.length - 1) {
+        [assetAccounts[idx], assetAccounts[idx+1]] = [assetAccounts[idx+1], assetAccounts[idx]];
+        LS.set("assetAccounts", assetAccounts); renderAssetsScreen();
+      }
+    };
+    div.querySelector(".card-edit-btn").onclick=()=>openAssetAccountSheet(acc.id);
+    div.querySelector(".del-btn").onclick=()=>{ appConfirm("削除の確認",`「${acc.name}」を削除しますか？`,()=>{ assetAccounts=assetAccounts.filter(x=>x.id!==acc.id); LS.set("assetAccounts",assetAccounts); renderAssetsScreen(); }); };
+    list.appendChild(div);
+  });
+}
+
 </script>
 </body>
 </html>
