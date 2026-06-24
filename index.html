@@ -1749,10 +1749,10 @@ function renderSettings(){
 }
 
 // ═══════════════════════════════════════════════
-// 【完全統合版】全機能インジェクション＆エラー修正コード
+// 【完全統合版】裏回り完全解消・保存＆コピー両対応・はみ出し絶対防止
 // ═══════════════════════════════════════════════
 
-// 📌 1. 共通カスタムスタイルの注入（グリッド・カラーピッカー用）
+// 📌 1. 共通カスタムスタイルの注入（グリッド・カラーピッカー・全画面はみ出し防止）
 if (!document.getElementById('custom-app-style')) {
   const style = document.createElement('style');
   style.id = 'custom-app-style';
@@ -1783,6 +1783,16 @@ if (!document.getElementById('custom-app-style')) {
       background: none !important;
       cursor: pointer !important;
     }
+    /* アプリ内の全入力欄、およびモーダル内のはみ出しを徹底防御 */
+    #custom-expense-edit-modal *,
+    #custom-expense-edit-modal input,
+    #custom-expense-edit-modal select,
+    #scr-input input,
+    #scr-input select,
+    #scr-input textarea {
+      box-sizing: border-box !important;
+      max-width: 100% !important;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -1794,7 +1804,6 @@ function fixButtonRows() {
     if (row.children.length > 2) { 
       row.classList.add('btn-row-grid-active');
     }
-    
     Array.from(row.children).forEach(child => {
       const text = child.textContent.trim();
       const cat = categories.find(c => c.label === text);
@@ -1804,8 +1813,6 @@ function fixButtonRows() {
     });
   });
 }
-
-// 画面切り替え時にボタンを補正
 if (window.changeScreen) {
   const originalChangeScreen = window.changeScreen;
   window.changeScreen = function() {
@@ -1816,7 +1823,17 @@ if (window.changeScreen) {
 setTimeout(fixButtonRows, 500);
 
 
-// 📌 3. 履歴画面のタップ修正（編集・削除モーダル）
+// 📌 3. 履歴データ特定ロジックの強化（バグの根本原因を解消）
+function findExpenseIndex(oldData) {
+  return expenses.findIndex(e => 
+    e.date === oldData.date &&
+    Number(e.amount) === Number(oldData.amount) &&
+    (e.memo || "") === (oldData.memo || "") &&
+    e.category === oldData.category &&
+    e.method === oldData.method
+  );
+}
+
 function setupHistoryClickEvents() {
   const scrHistory = document.getElementById('scr-history');
   if (!scrHistory || typeof historySelectedDate === 'undefined') return;
@@ -1825,23 +1842,30 @@ function setupHistoryClickEvents() {
   const dayExp = expenses.filter(e => e.date === historySelectedDate);
   
   items.forEach((item, idx) => {
-    const data = dayExp[idx];
-    if (!data) return;
-    
     item.style.cursor = 'pointer';
-    item.title = 'クリックして修正・削除';
+    item.title = 'クリックして修正・再入力';
     
-    // インラインで安全にスタイル適用
     item.addEventListener('mouseenter', () => item.style.background = 'var(--gray-50)');
     item.addEventListener('mouseleave', () => item.style.background = 'var(--white)');
     
     item.onclick = (e) => {
       e.stopPropagation();
+      
+      let data = dayExp[idx];
+      const itemText = item.textContent || "";
+      const amtMatch = itemText.replace(/,/g, '').match(/\d+/);
+      const amt = amtMatch ? Number(amtMatch[0]) : null;
+      
+      if (amt !== null) {
+        const exactData = dayExp.find(e => e.amount === amt && itemText.includes(e.memo || ""));
+        if (exactData) data = exactData;
+      }
+      
+      if (!data) return;
       openExpenseEditModal(data);
     };
   });
 }
-
 if (window.renderHistoryScreen) {
   const originalRenderHistoryScreen = window.renderHistoryScreen;
   window.renderHistoryScreen = function() {
@@ -1850,13 +1874,35 @@ if (window.renderHistoryScreen) {
   };
 }
 
+
+// 📌 4. 絶対に裏に隠れないカスタム最終確認ダイアログ
+function openCustomConfirm(title, message, onConfirm) {
+  const dialog = document.createElement('div');
+  dialog.style = "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:10000005 !important; font-family:var(--font); padding:16px; box-sizing:border-box;";
+  dialog.innerHTML = `
+    <div style="background:#fff; padding:20px; border-radius:12px; width:100%; max-width:300px; box-shadow:0 4px 24px rgba(0,0,0,0.3); box-sizing:border-box;">
+      <h4 style="margin-top:0; margin-bottom:8px; font-size:15px; font-weight:800; color:var(--gray-800);">${title}</h4>
+      <p style="margin-top:0; margin-bottom:20px; font-size:13px; color:var(--gray-600); line-height:1.5;">${message}</p>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button id="c-confirm-cancel" style="background:var(--gray-100); color:var(--gray-600); border:none; padding:8px 14px; border-radius:6px; cursor:pointer; font-weight:700; font-size:13px;">キャンセル</button>
+        <button id="c-confirm-ok" style="background:var(--red); color:#fff; border:none; padding:8px 14px; border-radius:6px; cursor:pointer; font-weight:700; font-size:13px;">削除する</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+  dialog.querySelector('#c-confirm-cancel').onclick = () => dialog.remove();
+  dialog.querySelector('#c-confirm-ok').onclick = () => { dialog.remove(); onConfirm(); };
+}
+
+
+// 📌 5. 編集・削除・コピー再入力ポップアップ本体
 function openExpenseEditModal(data) {
   const old = document.getElementById('custom-expense-edit-modal');
   if (old) old.remove();
   
   const modal = document.createElement('div');
   modal.id = 'custom-expense-edit-modal';
-  modal.style = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:9999; font-family:var(--font);";
+  modal.style = "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:999999 !important; font-family:var(--font); padding:16px; box-sizing:border-box;";
   
   let catOptions = '';
   categories.forEach(c => { catOptions += `<option value="${c.id}" ${data.category === c.id ? 'selected' : ''}>${c.label}</option>`; });
@@ -1864,43 +1910,47 @@ function openExpenseEditModal(data) {
   paymentMethods.forEach(m => { methodOptions += `<option value="${m.id}" ${data.method === m.id ? 'selected' : ''}>${m.label}</option>`; });
   
   modal.innerHTML = `
-    <div style="background:#fff; padding:20px; border-radius:16px; width:90%; max-width:360px; box-shadow:0 4px 20px rgba(0,0,0,0.15);">
-      <h3 style="margin-top:0; margin-bottom:16px; font-size:16px; font-weight:800; color:var(--gray-800);">データの修正</h3>
+    <div style="background:#fff; padding:20px; border-radius:16px; width:100%; max-width:340px; box-shadow:0 4px 24px rgba(0,0,0,0.2); box-sizing:border-box !important;">
+      <h3 style="margin-top:0; margin-bottom:16px; font-size:16px; font-weight:800; color:var(--gray-800);">データの編集・再入力</h3>
       
-      <div style="margin-bottom:12px;">
+      <div style="margin-bottom:12px; width:100%;">
         <label style="font-size:12px; font-weight:700; color:var(--gray-500); display:block; margin-bottom:4px;">日付</label>
-        <input type="date" id="edit-exp-date" value="${data.date || ''}" style="width:100%; padding:10px; border:1px solid var(--gray-300); border-radius:8px; box-sizing:border-box; font-size:15px; background:#fff;">
+        <input type="date" id="edit-exp-date" value="${data.date || ''}" style="width:100% !important; padding:10px !important; border:1px solid var(--gray-300) !important; border-radius:8px !important; font-size:15px !important; background:#fff !important;">
       </div>
 
-      <div style="margin-bottom:12px;">
+      <div style="margin-bottom:12px; width:100%;">
         <label style="font-size:12px; font-weight:700; color:var(--gray-500); display:block; margin-bottom:4px;">金額 (円)</label>
-        <input type="number" id="edit-exp-amount" value="${data.amount}" style="width:100%; padding:10px; border:1px solid var(--gray-300); border-radius:8px; box-sizing:border-box; font-size:15px;">
+        <input type="number" id="edit-exp-amount" value="${data.amount}" style="width:100% !important; padding:10px !important; border:1px solid var(--gray-300) !important; border-radius:8px !important; font-size:15px !important;">
       </div>
       
-      <div style="margin-bottom:12px;">
+      <div style="margin-bottom:12px; width:100%;">
         <label style="font-size:12px; font-weight:700; color:var(--gray-500); display:block; margin-bottom:4px;">メモ</label>
-        <input type="text" id="edit-exp-memo" value="${data.memo || ''}" style="width:100%; padding:10px; border:1px solid var(--gray-300); border-radius:8px; box-sizing:border-box; font-size:15px;">
+        <input type="text" id="edit-exp-memo" value="${data.memo || ''}" style="width:100% !important; padding:10px !important; border:1px solid var(--gray-300) !important; border-radius:8px !important; font-size:15px !important;">
       </div>
 
-      <div style="margin-bottom:12px;">
+      <div style="margin-bottom:12px; width:100%;">
         <label style="font-size:12px; font-weight:700; color:var(--gray-500); display:block; margin-bottom:4px;">カテゴリー</label>
-        <select id="edit-exp-cat" style="width:100%; padding:10px; border:1px solid var(--gray-300); border-radius:8px; box-sizing:border-box; font-size:15px; background:#fff;">
+        <select id="edit-exp-cat" style="width:100% !important; padding:10px !important; border:1px solid var(--gray-300) !important; border-radius:8px !important; font-size:15px !important; background:#fff !important;">
           ${catOptions}
         </select>
       </div>
 
-      <div style="margin-bottom:20px;">
+      <div style="margin-bottom:20px; width:100%;">
         <label style="font-size:12px; font-weight:700; color:var(--gray-500); display:block; margin-bottom:4px;">支払い方法</label>
-        <select id="edit-exp-method" style="width:100%; padding:10px; border:1px solid var(--gray-300); border-radius:8px; box-sizing:border-box; font-size:15px; background:#fff;">
+        <select id="edit-exp-method" style="width:100% !important; padding:10px !important; border:1px solid var(--gray-300) !important; border-radius:8px !important; font-size:15px !important; background:#fff !important;">
           ${methodOptions}
         </select>
       </div>
       
-      <div style="display:flex; gap:8px;">
-        <button id="btn-edit-delete" style="background:var(--red-light); color:var(--red); border:none; padding:10px 16px; border-radius:8px; cursor:pointer; font-weight:700; font-size:14px;">削除</button>
-        <div style="flex:1;"></div>
-        <button id="btn-edit-cancel" style="background:var(--gray-100); color:var(--gray-600); border:none; padding:10px 16px; border-radius:8px; cursor:pointer; font-weight:700; font-size:14px;">キャンセル</button>
-        <button id="btn-edit-save" style="background:var(--indigo); color:#fff; border:none; padding:10px 16px; border-radius:8px; cursor:pointer; font-weight:700; font-size:14px;">保存</button>
+      <div style="display:flex; flex-direction:column; gap:8px; width:100%;">
+        <div style="display:flex; gap:8px; width:100%;">
+          <button id="btn-edit-delete" style="background:var(--red-light); color:var(--red); border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:700; font-size:13px; flex:1;">🗑 削除</button>
+          <button id="btn-edit-cancel" style="background:var(--gray-100); color:var(--gray-600); border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:700; font-size:13px; flex:1;">キャンセル</button>
+        </div>
+        <div style="display:flex; gap:8px; width:100%;">
+          <button id="btn-edit-copy" style="background:var(--indigo-light); color:var(--indigo-dark); border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:700; font-size:13px; flex:1;">📋 コピーして登録</button>
+          <button id="btn-edit-save" style="background:var(--indigo); color:#fff; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:700; font-size:13px; flex:1;">💾 修正を保存</button>
+        </div>
       </div>
     </div>
   `;
@@ -1908,16 +1958,16 @@ function openExpenseEditModal(data) {
   document.body.appendChild(modal);
   modal.querySelector('#btn-edit-cancel').onclick = () => modal.remove();
   
+  // 💾 【修正して上書き保存】の処理
   modal.querySelector('#btn-edit-save').onclick = () => {
     const nextDate = modal.querySelector('#edit-exp-date').value;
     const amt = Number(modal.querySelector('#edit-exp-amount').value) || 0;
     const memo = modal.querySelector('#edit-exp-memo').value;
     const cat = modal.querySelector('#edit-exp-cat').value;
     const method = modal.querySelector('#edit-exp-method').value;
-    
     if (!nextDate) { alert("日付を入力してください"); return; }
     
-    const idxInAll = expenses.findIndex(e => e === data);
+    const idxInAll = findExpenseIndex(data);
     if (idxInAll !== -1) {
       expenses[idxInAll].date = nextDate;
       expenses[idxInAll].amount = amt;
@@ -1927,38 +1977,65 @@ function openExpenseEditModal(data) {
       
       LS.set("expenses", expenses);
       modal.remove();
-      
-      if (typeof historySelectedDate !== 'undefined') { window.historySelectedDate = nextDate; }
-      if (typeof renderHistoryScreen === 'function') renderHistoryScreen();
-      if (typeof renderAnalysisScreen === 'function') renderAnalysisScreen(); 
-      if (typeof renderAssetsScreen === 'function') renderAssetsScreen();
+      refreshAllScreens(nextDate);
+    } else {
+      alert("元データの特定に失敗しました。一度リロードしてください。");
     }
   };
   
+  // 📋 【コピーして新しく登録（再入力）】の処理
+  modal.querySelector('#btn-edit-copy').onclick = () => {
+    const nextDate = modal.querySelector('#edit-exp-date').value;
+    const amt = Number(modal.querySelector('#edit-exp-amount').value) || 0;
+    const memo = modal.querySelector('#edit-exp-memo').value;
+    const cat = modal.querySelector('#edit-exp-cat').value;
+    const method = modal.querySelector('#edit-exp-method').value;
+    if (!nextDate) { alert("日付を入力してください"); return; }
+
+    const newRecord = {
+      id: '_' + Math.random().toString(36).substr(2, 9),
+      date: nextDate,
+      amount: amt,
+      memo: memo,
+      category: cat,
+      method: method
+    };
+    
+    expenses.push(newRecord);
+    LS.set("expenses", expenses);
+    modal.remove();
+    refreshAllScreens(nextDate);
+  };
+  
+  // 🗑 【削除】の処理（自前確認ダイアログ呼び出し）
   modal.querySelector('#btn-edit-delete').onclick = () => {
-    appConfirm("削除の確認", "この履歴を完全に削除しますか？", () => {
-      const idxInAll = expenses.findIndex(e => e === data);
+    openCustomConfirm("削除の確認", "この履歴を完全に削除しますか？", () => {
+      const idxInAll = findExpenseIndex(data);
       if (idxInAll !== -1) {
         expenses.splice(idxInAll, 1);
         LS.set("expenses", expenses);
         modal.remove();
-        if (typeof renderHistoryScreen === 'function') renderHistoryScreen();
-        if (typeof renderAnalysisScreen === 'function') renderAnalysisScreen();
-        if (typeof renderAssetsScreen === 'function') renderAssetsScreen();
+        refreshAllScreens(data.date);
       }
     });
   };
 }
 
+// 🔄 画面更新を確実に行う共通ヘルパー
+function refreshAllScreens(targetDate) {
+  if (typeof historySelectedDate !== 'undefined' && targetDate) { window.historySelectedDate = targetDate; }
+  if (typeof renderHistoryScreen === 'function') renderHistoryScreen();
+  if (typeof renderAnalysisScreen === 'function') renderAnalysisScreen(); 
+  if (typeof renderAssetsScreen === 'function') renderAssetsScreen();
+}
 
-// 📌 4. 設定画面の拡張（干渉しないように既存メソッドをラップして追記）
+
+// 📌 6. 設定画面の拡張（干渉防止セーフガード付）
 if (window.renderSettings) {
   const originalRenderSettings = window.renderSettings;
   window.renderSettings = function() {
-    // ① 元の設定画面を一度完全に描画させる
     originalRenderSettings.apply(this, arguments);
     
-    // ② 貯金目標額入力ボックスの生成・追加
     let goalBox = document.getElementById("card-saving-goal-box");
     if(!goalBox) {
       goalBox = document.createElement("div");
@@ -1985,14 +2062,12 @@ if (window.renderSettings) {
       };
     }
 
-    // ③ カテゴリー編集行へのカラーピッカーの差し込み
     const catRows = document.querySelectorAll("#list-settings-categories .cat-edit-row");
     catRows.forEach((row, idx) => {
       const c = categories[idx];
       if (!c) return;
-      if (!c.color) c.color = "#6366f1"; // デフォルト色
+      if (!c.color) c.color = "#6366f1";
 
-      // コントロール枠（ボタン群の並び）を見つける
       const controls = row.querySelector(".cat-edit-controls");
       if (controls && !controls.querySelector(".custom-color-picker")) {
         const picker = document.createElement("input");
@@ -2000,10 +2075,8 @@ if (window.renderSettings) {
         picker.className = "custom-color-picker";
         picker.value = c.color;
         
-        // 操作ボタンの一番左側にピッカーを挿入
         controls.insertBefore(picker, controls.firstChild);
 
-        // 色変更時のイベント
         picker.onchange = e => {
           c.color = e.target.value;
           LS.set("categories", categories);
@@ -2017,13 +2090,12 @@ if (window.renderSettings) {
 }
 
 
-// 📌 5. 資産画面のレンダリング
+// 📌 7. 資産画面のレンダリング補正
 if (window.renderAssetsScreen) {
   const originalRenderAssetsScreen = window.renderAssetsScreen;
   window.renderAssetsScreen = function() {
     originalRenderAssetsScreen.apply(this, arguments);
     
-    // 総負債を考慮しない「総資産」のカスタム計算
     const totalAsset = assetAccounts.reduce((s, a) => s + a.balance, 0);
     const nwEl = document.getElementById("txt-asset-networth");
     if (nwEl) {
@@ -2037,7 +2109,6 @@ if (window.renderAssetsScreen) {
     const debtEl = document.getElementById("txt-asset-debt");
     if (debtEl) debtEl.textContent = `¥0`;
     
-    // 貯金目標進捗バーの計算
     const bankTotal = assetAccounts.filter(a => a.type === "bank" || a.type === "savings").reduce((s, a) => s + a.balance, 0);
     const savingGoal = Number(LS.get("savingGoal", 1000000));
     const sp = savingGoal > 0 ? Math.min((bankTotal / savingGoal) * 100, 100) : 0;
@@ -2051,7 +2122,7 @@ if (window.renderAssetsScreen) {
 }
 
 
-// 📌 6. 分析画面へのカラー連動システム
+// 📌 8. 分析画面へのカラー連動システム
 if (window.renderAnalysisScreen) {
   const originalRenderAnalysisScreen = window.renderAnalysisScreen;
   window.renderAnalysisScreen = function() {
@@ -2060,7 +2131,6 @@ if (window.renderAnalysisScreen) {
     const scrAnalysis = document.getElementById('scr-analysis');
     if (!scrAnalysis) return;
     
-    // ① Chart.jsグラフの自動配色
     const chartNames = ['analysisChart', 'myChart', 'cateChart', 'pieChart', 'chart'];
     chartNames.forEach(name => {
       if (window[name] && window[name].data && window[name].data.datasets) {
@@ -2080,7 +2150,6 @@ if (window.renderAnalysisScreen) {
       }
     });
 
-    // ② 分析リストの進捗バー・アイコンの自動配色
     categories.forEach(cat => {
       if (!cat.color) return;
       const elements = scrAnalysis.querySelectorAll('*');
