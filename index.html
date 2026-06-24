@@ -1749,10 +1749,10 @@ function renderSettings(){
 }
 
 // ═══════════════════════════════════════════════
-// 【完全統合版】裏回り完全解消・保存＆コピー両対応・はみ出し絶対防止
+// 【分析合算版】固定費分離システム（収支レポート完全連動機能）
 // ═══════════════════════════════════════════════
 
-// 📌 1. 共通カスタムスタイルの注入（グリッド・カラーピッカー・全画面はみ出し防止）
+// 📌 1. 共通カスタムスタイルの注入（固定費バッジ・集計パネル・はみ出し防止）
 if (!document.getElementById('custom-app-style')) {
   const style = document.createElement('style');
   style.id = 'custom-app-style';
@@ -1783,13 +1783,22 @@ if (!document.getElementById('custom-app-style')) {
       background: none !important;
       cursor: pointer !important;
     }
-    /* アプリ内の全入力欄、およびモーダル内のはみ出しを徹底防御 */
+    /* 固定費バッジのスタイル */
+    .badge-fixed {
+      background: #e0e7ff !important;
+      color: #4338ca !important;
+      font-size: 10px !important;
+      padding: 2px 6px !important;
+      border-radius: 4px !important;
+      margin-left: 6px !important;
+      font-weight: bold !important;
+    }
+    /* アプリ内のはみ出し防御 */
     #custom-expense-edit-modal *,
     #custom-expense-edit-modal input,
     #custom-expense-edit-modal select,
     #scr-input input,
-    #scr-input select,
-    #scr-input textarea {
+    #scr-input select {
       box-sizing: border-box !important;
       max-width: 100% !important;
     }
@@ -1823,7 +1832,7 @@ if (window.changeScreen) {
 setTimeout(fixButtonRows, 500);
 
 
-// 📌 3. 履歴データ特定ロジックの強化（バグの根本原因を解消）
+// 📌 3. 履歴データ特定ロジック
 function findExpenseIndex(oldData) {
   return expenses.findIndex(e => 
     e.date === oldData.date &&
@@ -1834,34 +1843,71 @@ function findExpenseIndex(oldData) {
   );
 }
 
+
+// 📌 4. 履歴画面の補正（固定費・変動費の「分離集計ツインパネル」＆バッジ付与）
 function setupHistoryClickEvents() {
   const scrHistory = document.getElementById('scr-history');
   if (!scrHistory || typeof historySelectedDate === 'undefined') return;
   
-  const items = scrHistory.querySelectorAll('.expense-item');
+  // 💡 選択された日の「変動費」と「固定費」を別々に計算して上部にパネルを挿入
   const dayExp = expenses.filter(e => e.date === historySelectedDate);
+  let variableSum = 0;
+  let fixedSum = 0;
   
+  dayExp.forEach(e => {
+    if (e.isFixed) {
+      fixedSum += Number(e.amount);
+    } else {
+      variableSum += Number(e.amount);
+    }
+  });
+
+  let infoPanel = document.getElementById("custom-history-summary-panel");
+  if (!infoPanel) {
+    infoPanel = document.createElement("div");
+    infoPanel.id = "custom-history-summary-panel";
+    scrHistory.insertBefore(infoPanel, scrHistory.children[1] || scrHistory.firstChild);
+  }
+  infoPanel.style = "margin: 12px 16px; padding: 12px; background: var(--gray-50); border-radius: 12px; display: flex; gap: 12px; box-sizing: border-box;";
+  infoPanel.innerHTML = `
+    <div style="flex:1; background:#fff; padding:8px; border-radius:8px; border-left:4px solid var(--indigo); text-align:center;">
+      <div style="font-size:11px; color:var(--gray-500); font-weight:700;">変動費（生活費）</div>
+      <div style="font-size:15px; font-weight:800; color:var(--gray-800); margin-top:2px;">¥${variableSum.toLocaleString()}</div>
+    </div>
+    <div style="flex:1; background:#fff; padding:8px; border-radius:8px; border-left:4px solid #4338ca; text-align:center;">
+      <div style="font-size:11px; color:var(--gray-500); font-weight:700;">固定費（別計算）</div>
+      <div style="font-size:15px; font-weight:800; color:#4338ca; margin-top:2px;">¥${fixedSum.toLocaleString()}</div>
+    </div>
+  `;
+
+  // 💡 各明細へのタップイベント付与 ＆ 固定費バッジの見た目反映
+  const items = scrHistory.querySelectorAll('.expense-item');
   items.forEach((item, idx) => {
     item.style.cursor = 'pointer';
-    item.title = 'クリックして修正・再入力';
     
-    item.addEventListener('mouseenter', () => item.style.background = 'var(--gray-50)');
-    item.addEventListener('mouseleave', () => item.style.background = 'var(--white)');
+    let data = dayExp[idx];
+    const itemText = item.textContent || "";
+    const amtMatch = itemText.replace(/,/g, '').match(/\d+/);
+    const amt = amtMatch ? Number(amtMatch[0]) : null;
+    if (amt !== null) {
+      const exactData = dayExp.find(e => e.amount === amt && itemText.includes(e.memo || ""));
+      if (exactData) data = exactData;
+    }
+    if (!data) return;
+
+    // バッジの重複防止クリア
+    const oldBadges = item.querySelectorAll('.badge-fixed');
+    oldBadges.forEach(b => b.remove());
+
+    if (data.isFixed) {
+      const b = document.createElement('span');
+      b.className = 'badge-fixed';
+      b.textContent = '固定費';
+      item.appendChild(b);
+    }
     
     item.onclick = (e) => {
       e.stopPropagation();
-      
-      let data = dayExp[idx];
-      const itemText = item.textContent || "";
-      const amtMatch = itemText.replace(/,/g, '').match(/\d+/);
-      const amt = amtMatch ? Number(amtMatch[0]) : null;
-      
-      if (amt !== null) {
-        const exactData = dayExp.find(e => e.amount === amt && itemText.includes(e.memo || ""));
-        if (exactData) data = exactData;
-      }
-      
-      if (!data) return;
       openExpenseEditModal(data);
     };
   });
@@ -1875,7 +1921,7 @@ if (window.renderHistoryScreen) {
 }
 
 
-// 📌 4. 絶対に裏に隠れないカスタム最終確認ダイアログ
+// 📌 5. 絶対に裏に隠れないカスタム最終確認ダイアログ
 function openCustomConfirm(title, message, onConfirm) {
   const dialog = document.createElement('div');
   dialog.style = "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:10000005 !important; font-family:var(--font); padding:16px; box-sizing:border-box;";
@@ -1895,7 +1941,7 @@ function openCustomConfirm(title, message, onConfirm) {
 }
 
 
-// 📌 5. 編集・削除・コピー再入力ポップアップ本体
+// 📌 6. 編集・削除・再入力ポップアップ
 function openExpenseEditModal(data) {
   const old = document.getElementById('custom-expense-edit-modal');
   if (old) old.remove();
@@ -1935,11 +1981,17 @@ function openExpenseEditModal(data) {
         </select>
       </div>
 
-      <div style="margin-bottom:20px; width:100%;">
+      <div style="margin-bottom:16px; width:100%;">
         <label style="font-size:12px; font-weight:700; color:var(--gray-500); display:block; margin-bottom:4px;">支払い方法</label>
         <select id="edit-exp-method" style="width:100% !important; padding:10px !important; border:1px solid var(--gray-300) !important; border-radius:8px !important; font-size:15px !important; background:#fff !important;">
           ${methodOptions}
         </select>
+      </div>
+
+      <div style="margin-bottom:20px; background:var(--gray-50); padding:12px; border-radius:8px;">
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; color:var(--gray-700); cursor:pointer;">
+          <input type="checkbox" id="edit-exp-isfixed" ${data.isFixed ? 'checked' : ''} style="width:16px; height:16px;"> 固定費として別計算にする
+        </label>
       </div>
       
       <div style="display:flex; flex-direction:column; gap:8px; width:100%;">
@@ -1957,57 +2009,43 @@ function openExpenseEditModal(data) {
   
   document.body.appendChild(modal);
   modal.querySelector('#btn-edit-cancel').onclick = () => modal.remove();
-  
-  // 💾 【修正して上書き保存】の処理
+
+  // 💾 【修正して上書き保存】
   modal.querySelector('#btn-edit-save').onclick = () => {
     const nextDate = modal.querySelector('#edit-exp-date').value;
     const amt = Number(modal.querySelector('#edit-exp-amount').value) || 0;
     const memo = modal.querySelector('#edit-exp-memo').value;
     const cat = modal.querySelector('#edit-exp-cat').value;
     const method = modal.querySelector('#edit-exp-method').value;
+    const isFixed = modal.querySelector('#edit-exp-isfixed').checked;
     if (!nextDate) { alert("日付を入力してください"); return; }
     
     const idxInAll = findExpenseIndex(data);
     if (idxInAll !== -1) {
-      expenses[idxInAll].date = nextDate;
-      expenses[idxInAll].amount = amt;
-      expenses[idxInAll].memo = memo;
-      expenses[idxInAll].category = cat;
-      expenses[idxInAll].method = method;
-      
+      expenses[idxInAll] = { ...expenses[idxInAll], date: nextDate, amount: amt, memo: memo, category: cat, method: method, isFixed: isFixed };
       LS.set("expenses", expenses);
       modal.remove();
       refreshAllScreens(nextDate);
-    } else {
-      alert("元データの特定に失敗しました。一度リロードしてください。");
-    }
+    } else { alert("データの特定に失敗しました。再読み込みしてください。"); }
   };
   
-  // 📋 【コピーして新しく登録（再入力）】の処理
+  // 📋 【コピーして新しく登録（再入力）】
   modal.querySelector('#btn-edit-copy').onclick = () => {
     const nextDate = modal.querySelector('#edit-exp-date').value;
     const amt = Number(modal.querySelector('#edit-exp-amount').value) || 0;
     const memo = modal.querySelector('#edit-exp-memo').value;
     const cat = modal.querySelector('#edit-exp-cat').value;
     const method = modal.querySelector('#edit-exp-method').value;
+    const isFixed = modal.querySelector('#edit-exp-isfixed').checked;
     if (!nextDate) { alert("日付を入力してください"); return; }
 
-    const newRecord = {
-      id: '_' + Math.random().toString(36).substr(2, 9),
-      date: nextDate,
-      amount: amt,
-      memo: memo,
-      category: cat,
-      method: method
-    };
-    
-    expenses.push(newRecord);
+    expenses.push({ id: '_' + Math.random().toString(36).substr(2, 9), date: nextDate, amount: amt, memo: memo, category: cat, method: method, isFixed: isFixed });
     LS.set("expenses", expenses);
     modal.remove();
     refreshAllScreens(nextDate);
   };
   
-  // 🗑 【削除】の処理（自前確認ダイアログ呼び出し）
+  // 🗑 【削除】
   modal.querySelector('#btn-edit-delete').onclick = () => {
     openCustomConfirm("削除の確認", "この履歴を完全に削除しますか？", () => {
       const idxInAll = findExpenseIndex(data);
@@ -2021,7 +2059,6 @@ function openExpenseEditModal(data) {
   };
 }
 
-// 🔄 画面更新を確実に行う共通ヘルパー
 function refreshAllScreens(targetDate) {
   if (typeof historySelectedDate !== 'undefined' && targetDate) { window.historySelectedDate = targetDate; }
   if (typeof renderHistoryScreen === 'function') renderHistoryScreen();
@@ -2030,12 +2067,11 @@ function refreshAllScreens(targetDate) {
 }
 
 
-// 📌 6. 設定画面の拡張（干渉防止セーフガード付）
+// 📌 7. 設定画面の拡張
 if (window.renderSettings) {
   const originalRenderSettings = window.renderSettings;
   window.renderSettings = function() {
     originalRenderSettings.apply(this, arguments);
-    
     let goalBox = document.getElementById("card-saving-goal-box");
     if(!goalBox) {
       goalBox = document.createElement("div");
@@ -2067,16 +2103,13 @@ if (window.renderSettings) {
       const c = categories[idx];
       if (!c) return;
       if (!c.color) c.color = "#6366f1";
-
       const controls = row.querySelector(".cat-edit-controls");
       if (controls && !controls.querySelector(".custom-color-picker")) {
         const picker = document.createElement("input");
         picker.type = "color";
         picker.className = "custom-color-picker";
         picker.value = c.color;
-        
         controls.insertBefore(picker, controls.firstChild);
-
         picker.onchange = e => {
           c.color = e.target.value;
           LS.set("categories", categories);
@@ -2090,47 +2123,42 @@ if (window.renderSettings) {
 }
 
 
-// 📌 7. 資産画面のレンダリング補正
+// 📌 8. 資産画面の補正
 if (window.renderAssetsScreen) {
   const originalRenderAssetsScreen = window.renderAssetsScreen;
   window.renderAssetsScreen = function() {
     originalRenderAssetsScreen.apply(this, arguments);
-    
+
     const totalAsset = assetAccounts.reduce((s, a) => s + a.balance, 0);
     const nwEl = document.getElementById("txt-asset-networth");
     if (nwEl) {
       nwEl.textContent = `¥${totalAsset.toLocaleString("ja-JP")}`;
       nwEl.className = "big-number" + (totalAsset < 0 ? " negative" : totalAsset > 0 ? " positive" : "");
     }
-    
     const bigLabel = document.querySelector('#scr-assets .big-label');
     if (bigLabel) { bigLabel.textContent = "総資産"; }
-    
     const debtEl = document.getElementById("txt-asset-debt");
     if (debtEl) debtEl.textContent = `¥0`;
     
     const bankTotal = assetAccounts.filter(a => a.type === "bank" || a.type === "savings").reduce((s, a) => s + a.balance, 0);
     const savingGoal = Number(LS.get("savingGoal", 1000000));
     const sp = savingGoal > 0 ? Math.min((bankTotal / savingGoal) * 100, 100) : 0;
-    
-    const pctEl = document.getElementById("txt-asset-goal-pct");
-    if (pctEl) pctEl.textContent = `${sp.toFixed(1)}%`;
-    
-    const barEl = document.getElementById("bar-asset-goal-fill");
-    if (barEl) barEl.style.width = `${sp}%`;
+    if (pctEl = document.getElementById("txt-asset-goal-pct")) pctEl.textContent = `${sp.toFixed(1)}%`;
+    if (barEl = document.getElementById("bar-asset-goal-fill")) barEl.style.width = `${sp}%`;
   };
 }
 
 
-// 📌 8. 分析画面へのカラー連動システム
+// 📌 9. 分析画面の補正（固定費も合算してレポートするよう修正）
 if (window.renderAnalysisScreen) {
   const originalRenderAnalysisScreen = window.renderAnalysisScreen;
   window.renderAnalysisScreen = function() {
+    // 💡 固定費も収支レポートに含めるため、フィルタリングは行わずにそのまま本体の計算ロジックを実行します
     originalRenderAnalysisScreen.apply(this, arguments);
     
+    // カラー連動処理
     const scrAnalysis = document.getElementById('scr-analysis');
     if (!scrAnalysis) return;
-    
     const chartNames = ['analysisChart', 'myChart', 'cateChart', 'pieChart', 'chart'];
     chartNames.forEach(name => {
       if (window[name] && window[name].data && window[name].data.datasets) {
@@ -2159,7 +2187,6 @@ if (window.renderAnalysisScreen) {
           if (parent) {
             const bar = parent.querySelector('.progress-fill, .bar, .chart-bar, [style*="width"]');
             if (bar) bar.style.setProperty('background-color', cat.color, 'important');
-            
             const icon = parent.querySelector('.category-icon, .icon, .badge');
             if (icon) icon.style.setProperty('background-color', cat.color, 'important');
           }
