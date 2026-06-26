@@ -463,6 +463,10 @@
             <span>➕ 総収入: <span id="txt-analysis-sub-income" style="color:var(--emerald-dark);">¥0</span></span>
             <span>➖ 総支出: <span id="txt-analysis-sub-expense" style="color:var(--red);">¥0</span></span>
           </div>
+          <div class="analysis-sub-row" style="border-top:none; padding-top:4px; margin-top:0;">
+            <span>💳 ローン返済: <span id="txt-analysis-sub-repay" style="color:var(--amber);">¥0</span></span>
+            <span>📊 支出+返済: <span id="txt-analysis-sub-total" style="color:var(--red);">¥0</span></span>
+          </div>
         </div>
         <div class="card" id="card-analysis-chart-box">
           <h3 class="sub-title">カテゴリー別支出内訳</h3>
@@ -1228,7 +1232,7 @@ function buildCustomCalendar(year, month, titleId, gridId, onSelect, currentSele
     if(injectAmounts){
       const dayTx=expenses.filter(e=>e.date===dateStr);
       if(dayTx.length>0){
-        const eSum=dayTx.filter(e=>e.type!=="income"&&e.type!=="repay").reduce((s,e)=>s+e.amount,0);
+        const eSum=dayTx.filter(e=>e.type!=="income").reduce((s,e)=>s+e.amount,0);   // 支出＋返済
         const iSum=dayTx.filter(e=>e.type==="income").reduce((s,e)=>s+e.amount,0);
         const al=document.createElement("span"); al.className="cal-day-amt";
         if(eSum>0){
@@ -1311,7 +1315,7 @@ function renderHistoryScreen(){
 
   const dayExp=expenses.filter(e=>e.date===historySelectedDate);
   document.getElementById("lbl-history-view-title").textContent=`📊 ${historySelectedDate.replace(/-/g,"/")} の合計`;
-  const dayE=dayExp.filter(e=>e.type!=="income"&&e.type!=="repay").reduce((s,e)=>s+e.amount,0);
+  const dayE=dayExp.filter(e=>e.type!=="income").reduce((s,e)=>s+e.amount,0);   // 支出＋返済
   const dayI=dayExp.filter(e=>e.type==="income").reduce((s,e)=>s+e.amount,0);
   const netDay=dayI-dayE;
   const tdEl=document.getElementById("txt-history-daily-total");
@@ -1320,7 +1324,7 @@ function renderHistoryScreen(){
 
   const mStr=`${hYear}-${String(hMonth+1).padStart(2,'0')}`;
   const mTx=expenses.filter(e=>e.date.slice(0,7)===mStr);
-  const mE=mTx.filter(e=>e.type!=="income"&&e.type!=="repay").reduce((s,e)=>s+e.amount,0);
+  const mE=mTx.filter(e=>e.type!=="income").reduce((s,e)=>s+e.amount,0);   // 支出＋返済
   const mI=mTx.filter(e=>e.type==="income").reduce((s,e)=>s+e.amount,0);
   const netM=mI-mE;
   const mdEl=document.getElementById("txt-history-month-diff");
@@ -1442,21 +1446,30 @@ function renderAnalysisScreen(){
   const label=`${analysisYear}年${String(analysisMonth+1).padStart(2,'0')}月`;
   document.getElementById("analysis-month-title").textContent=label;
   document.getElementById("lbl-analysis-report-title").textContent=`${label} の収支レポート`;
+
   const monthly=expenses.filter(e=>e.date.slice(0,7)===mStr);
-  const totalE=monthly.filter(e=>e.type!=="income"&&e.type!=="repay").reduce((s,e)=>s+e.amount,0);
-  const totalI=monthly.filter(e=>e.type==="income").reduce((s,e)=>s+e.amount,0);
-  const net=totalI-totalE;
+  const totalE  = monthly.filter(e=>e.type!=="income"&&e.type!=="repay").reduce((s,e)=>s+e.amount,0);
+  const totalR  = monthly.filter(e=>e.type==="repay").reduce((s,e)=>s+e.amount,0);
+  const totalI  = monthly.filter(e=>e.type==="income").reduce((s,e)=>s+e.amount,0);
+  const totalOut = totalE + totalR;              // 支出＋返済の合計
+  const net = totalI - totalOut;
+
   const te=document.getElementById("txt-analysis-month-total");
   te.textContent=`${net>=0?"+":""}¥${net.toLocaleString("ja-JP")}`;
   te.className=`big-number ${net>=0?"positive":"negative"}`;
-  document.getElementById("txt-analysis-sub-income").textContent=`¥${totalI.toLocaleString("ja-JP")}`;
+
+  document.getElementById("txt-analysis-sub-income").textContent =`¥${totalI.toLocaleString("ja-JP")}`;
   document.getElementById("txt-analysis-sub-expense").textContent=`¥${totalE.toLocaleString("ja-JP")}`;
+  document.getElementById("txt-analysis-sub-repay").textContent  =`¥${totalR.toLocaleString("ja-JP")}`;
+  document.getElementById("txt-analysis-sub-total").textContent  =`¥${totalOut.toLocaleString("ja-JP")}`;
+
   const rankList=document.getElementById("list-analysis-ranks");
   const donut=document.getElementById("chart-analysis-donut");
-  if(totalE===0){ document.getElementById("card-analysis-chart-box").style.display="none"; return; }
+
+  if(totalOut===0){ document.getElementById("card-analysis-chart-box").style.display="none"; return; }
   document.getElementById("card-analysis-chart-box").style.display="block";
 
-  // 全カテゴリーを集計（0円含む）、金額降順でソート
+  // カテゴリー別集計（全カテゴリー）
   const byCat = categories
     .map(c=>({
       ...c,
@@ -1464,35 +1477,40 @@ function renderAnalysisScreen(){
     }))
     .sort((a,b)=>b.sum-a.sum);
 
+  // 返済を「ローン返済」として追記
+  if(totalR>0){
+    byCat.push({ id:"__repay__", label:"💳 ローン返済", color:"#F59E0B", sum:totalR });
+    byCat.sort((a,b)=>b.sum-a.sum);
+  }
+
   rankList.innerHTML=""; let acc=0; const conic=[];
 
-  // 円グラフは支出ありのカテゴリーのみ（0円はグラフに映らないため）
-  const byCatWithSum = byCat.filter(c=>c.sum>0);
-  byCatWithSum.forEach(c=>{
-    const pct=(c.sum/totalE)*100;
+  // 円グラフ（支出+返済ありのみ）
+  byCat.filter(c=>c.sum>0).forEach(c=>{
+    const pct=(c.sum/totalOut)*100;
     conic.push(`${c.color} ${acc}% ${acc+pct}%`); acc+=pct;
   });
   donut.style.background = conic.length
     ? `conic-gradient(${conic.join(",")})`
     : `var(--gray-100)`;
 
-  // リストは全カテゴリー表示
+  // リスト（全カテゴリー＋返済）
   byCat.forEach(c=>{
-    const pct = totalE>0 ? (c.sum/totalE)*100 : 0;
+    const pct = totalOut>0 ? (c.sum/totalOut)*100 : 0;
     const row=document.createElement("div"); row.className="rank-item";
     row.innerHTML=`
       <div class="rank-header">
         <span class="rank-dot" style="background:${c.color}"></span>
         <span class="rank-label">${c.label}</span>
         <span class="rank-amount" style="color:${c.sum>0?'var(--gray-900)':'var(--gray-300)'};">
-          ${c.sum>0 ? `¥${c.sum.toLocaleString("ja-JP")}` : '¥0'}
+          ${c.sum>0?`¥${c.sum.toLocaleString("ja-JP")}`:'¥0'}
         </span>
       </div>
       <div class="progress-bar-bg">
         <div class="progress-bar-fill" style="width:${pct.toFixed(1)}%;background:${c.color}"></div>
       </div>
       <div style="font-size:11px;color:${c.sum>0?'var(--gray-400)':'var(--gray-300)'};text-align:right;margin-top:3px;font-weight:600;">
-        ${c.sum>0 ? pct.toFixed(1)+'%' : '0%'}
+        ${c.sum>0?pct.toFixed(1)+'%':'0%'}
       </div>`;
     rankList.appendChild(row);
   });
@@ -1936,7 +1954,26 @@ document.addEventListener("DOMContentLoaded", () => {
           for (const key in data) {
             localStorage.setItem(key, data[key]);
           }
-          location.reload();
+          // 全状態変数をlocalStorageから再読み込み
+          expenses       = LS.get("expenses", []);
+          assetAccounts  = LS.get("assetAccounts", DEFAULT_ASSET_ACCOUNTS);
+          loans          = LS.get("loans", DEFAULT_LOANS);
+          categories     = LS.get("categories", DEFAULT_CATEGORIES);
+          paymentMethods = LS.get("paymentMethods", DEFAULT_METHODS);
+          checkedCards   = LS.get("checkedCards", {});
+          tabVisibility  = LS.get("tabVisibility", DEFAULT_TAB_VISIBILITY);
+          fixedTemplates = LS.get("fixedTemplates", []);
+          // 全画面を再描画
+          renderNavigation();
+          renderInputScreen();
+          renderHistoryScreen();
+          renderAnalysisScreen();
+          renderBudgetScreen();
+          renderAssetsScreen();
+          renderLoansScreen();
+          renderCardTasks();
+          renderSettings();
+          showSnackbar("✅ バックアップデータを復元しました");
         };
 
         if (typeof appConfirm === "function") {
